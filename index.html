@@ -1,0 +1,199 @@
+
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frontline Map Studio</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#151d26;color:#eee;font:14px Arial}
+header{padding:15px;background:#090e14;border-bottom:1px solid #46515d}
+header h2{margin:0;color:#e5bd70}
+main{display:flex;height:calc(100vh - 65px)}
+aside{width:270px;padding:12px;background:#202b36;overflow:auto}
+#map{flex:1}
+button,select,input{width:100%;padding:10px;margin:5px 0;background:#293846;color:white;border:1px solid #526273;border-radius:5px}
+button{cursor:pointer}
+button:hover{background:#43566a}
+label{color:#bbc6d0}
+small{color:#aab5c0}
+@media(max-width:650px){main{flex-direction:column;height:auto}#map{height:55vh;flex:none}aside{width:100%}}
+</style>
+</head>
+<body>
+<header><h2>⚔ FRONTLINE MAP STUDIO</h2>
+<small>Редактор оперативних карт</small></header>
+<main>
+<aside>
+<h3>Інструменти карти</h3>
+<label>Тип об'єкта</label>
+<select id="kind">
+<option value="front">🔴 Лінія фронту</option>
+<option value="advance">🟢 Просування</option>
+<option value="gray">⚪ Сіра зона</option>
+<option value="control">🔵 Зона контролю</option>
+</select>
+<label>Колір</label>
+<input type="color" id="color" value="#d34b43">
+<button onclick="save()">💾 Зберегти карту</button>
+<button onclick="downloadMap()">📥 Експорт JSON</button>
+<button onclick="document.getElementById('file').click()">📂 Завантажити карту</button>
+<input type="file" id="file" accept=".json" hidden>
+<button onclick="clearMap()">🗑 Очистити карту</button>
+<hr>
+<h3>Вибраний об'єкт</h3>
+<input id="title" placeholder="Назва об'єкта">
+<input id="note" placeholder="Примітка">
+<button onclick="applyEdit()">Застосувати зміни</button>
+<hr>
+<h3>Об'єкти</h3>
+<div id="objects"></div>
+<hr>
+<small id="updated">Карта ще не оновлювалась</small>
+<p><small>Карта OpenStreetMap. Дані редагуються власником.</small></p>
+</aside>
+<div id="map"></div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+const map=L.map('map').setView([48.5,31.2],6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+maxZoom:19,attribution:'© OpenStreetMap'
+}).addTo(map);
+
+const group=new L.FeatureGroup().addTo(map);
+let selected=null;
+const colors={
+front:'#d34b43',advance:'#45aa65',
+gray:'#999da3',control:'#4386cf'
+};
+
+const control=new L.Control.Draw({
+draw:{
+polyline:{shapeOptions:{color:'#d34b43',weight:4}},
+polygon:{shapeOptions:{color:'#999da3',fillOpacity:.3}},
+rectangle:{shapeOptions:{color:'#999da3',fillOpacity:.3}},
+marker:true,circle:false,circlemarker:false
+},
+edit:{featureGroup:group}
+});
+map.addControl(control);
+
+map.on(L.Draw.Event.CREATED,e=>{
+let l=e.layer;
+let kind=document.getElementById('kind').value;
+let color=document.getElementById('color').value;
+l.options.kind=kind;
+l.options.title='Новий об’єкт';
+l.options.note='';
+l.options.color=color;
+if(l.setStyle)l.setStyle({color,fillColor:color,fillOpacity:.3,weight:4});
+l.bindTooltip('Новий об’єкт');
+group.addLayer(l);
+select(l);
+save();
+});
+
+group.on('click',e=>select(e.layer));
+
+function select(l){
+selected=l;
+title.value=l.options.title||'';
+note.value=l.options.note||'';
+color.value=l.options.color||'#d34b43';
+}
+
+function applyEdit(){
+if(!selected)return alert('Вибери об’єкт на карті');
+selected.options.title=title.value||'Без назви';
+selected.options.note=note.value;
+selected.options.color=color.value;
+if(selected.setStyle)selected.setStyle({
+color:color.value,fillColor:color.value
+});
+selected.unbindTooltip();
+selected.bindTooltip(selected.options.title);
+save();
+}
+
+function save(){
+localStorage.setItem('frontlineMap',JSON.stringify(group.toGeoJSON()));
+localStorage.setItem('frontlineDate',new Date().toLocaleString());
+updated.textContent='Оновлено: '+localStorage.getItem('frontlineDate');
+render();
+}
+
+function render(){
+objects.innerHTML='';
+group.eachLayer(l=>{
+let b=document.createElement('button');
+b.textContent='📍 '+(l.options.title||'Об’єкт');
+b.onclick=()=>{
+select(l);
+if(l.getBounds)map.fitBounds(l.getBounds());
+else map.panTo(l.getLatLng());
+};
+objects.appendChild(b);
+});
+}
+
+function loadData(data){
+group.clearLayers();
+L.geoJSON(data,{
+style:f=>({
+color:f.properties.color||'#d34b43',
+fillColor:f.properties.color||'#d34b43',
+fillOpacity:.3,weight:4
+}),
+pointToLayer:(f,ll)=>L.marker(ll)
+}).eachLayer(l=>{
+let p=l.feature.properties||{};
+l.options.kind=p.kind||'front';
+l.options.title=p.title||'Об’єкт';
+l.options.note=p.note||'';
+l.options.color=p.color||'#d34b43';
+l.bindTooltip(l.options.title);
+group.addLayer(l);
+});
+save();
+}
+
+function downloadMap(){
+let data=group.toGeoJSON();
+group.eachLayer((l,i)=>{
+data.features[i].properties={
+kind:l.options.kind,title:l.options.title,
+note:l.options.note,color:l.options.color
+};
+});
+let a=document.createElement('a');
+a.href=URL.createObjectURL(new Blob(
+[JSON.stringify(data)],{type:'application/json'}));
+a.download='frontline-map.json';
+a.click();
+URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('file').onchange=async e=>{
+let f=e.target.files[0];
+if(!f)return;
+try{loadData(JSON.parse(await f.text()));}
+catch(err){alert('Помилка файлу карти');}
+};
+
+function clearMap(){
+if(confirm('Видалити всі об’єкти?')){
+group.clearLayers();selected=null;save();
+}
+}
+
+let old=localStorage.getItem('frontlineMap');
+if(old){try{loadData(JSON.parse(old));}catch(e){}}
+</script>
+</body>
+  </html>
+  
